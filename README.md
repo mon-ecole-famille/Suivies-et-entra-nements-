@@ -3,7 +3,7 @@
 Application familiale installable sur téléphone (PWA), gratuite, sans compte, qui marche **hors-ligne**.
 Pensée pour 3 niveaux : **CE2**, **3e (brevet)** et **1re ST2S (bac)**.
 
-👉 **Adresse de l'app :** https://delblond.github.io/Suivies-et-entra-nements-/
+👉 **Adresse de l'app :** `https://<compte>.github.io/<dépôt>/` (visible dans Settings → Pages)
 
 ## Ce que fait l'app
 
