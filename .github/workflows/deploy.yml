@@ -1,0 +1,49 @@
+name: Déployer l'application (GitHub Pages)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Vérifier les contenus et générateurs
+        run: node tests/check.mjs
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Préparer le site + numéro de version (mise à jour auto des téléphones)
+        run: |
+          VERSION="$(date -u +%Y.%m.%d-%H%M)-${GITHUB_SHA::7}"
+          mkdir -p _site
+          cp -r index.html manifest.webmanifest sw.js css js icons _site/
+          touch _site/.nojekyll
+          sed -i "s/__VERSION__/${VERSION}/g" _site/index.html _site/sw.js
+          echo "Version : ${VERSION}"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4
