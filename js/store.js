@@ -320,6 +320,14 @@ export async function setupLink(kid) {
   const obj = { k: 'setup', kid: { id: kid.id, name: kid.name, level: kid.level, avatar: kid.avatar, goalMin: kid.goalMin }, rewards: S.rewards, pin: S.pin };
   return base() + '#/import/' + await pack(obj);
 }
+// Lien famille : installe le code parent et les récompenses sur le téléphone d'un enfant (à distance)
+export async function familyLink() { return base() + '#/import/' + await pack({ k: 'fam', rewards: S.rewards, pin: S.pin }); }
+// Décision du parent sur une demande de récompense, envoyée à distance
+export async function decisionLink(kid, reqId, accept) {
+  const r = kid.requests.find((x) => x.id === reqId); if (r) { r.st = accept ? 'ok' : 'refus'; save(); }
+  return base() + '#/import/' + await pack({ k: 'dec', kid: kid.id, req: reqId, ok: accept, rewards: S.rewards, pin: S.pin, sig: hashPin(reqId + (accept ? 1 : 0) + S.pin) });
+}
+export const hasLocalKid = () => S.kids.some((k) => !k.remote);
 export async function importCode(code) {
   const o = await unpack(code);
   if (o.k === 'setup') {
@@ -328,6 +336,15 @@ export async function importCode(code) {
     Object.assign(k, { name: o.kid.name, level: o.kid.level, avatar: o.kid.avatar, goalMin: o.kid.goalMin, remote: false });
     S.rewards = o.rewards || S.rewards; if (o.pin) S.pin = o.pin; S.lastKid = k.id; save();
     return { type: 'setup', kid: k };
+  }
+  if (o.k === 'fam') { if (o.pin) S.pin = o.pin; if (o.rewards) S.rewards = o.rewards; save(); return { type: 'fam' }; }
+  if (o.k === 'dec') {
+    if (o.sig !== hashPin(o.req + (o.ok ? 1 : 0) + o.pin)) throw new Error('signature');
+    if (o.pin) S.pin = o.pin; if (o.rewards) S.rewards = o.rewards;
+    const k = kidById(o.kid); const r = k && k.requests.find((x) => x.id === o.req);
+    if (!r) { save(); return { type: 'dec-missing' }; }
+    if (r.st === 'attente') settleRequest(k, o.req, o.ok); else save();
+    return { type: 'dec', kid: k, req: r, ok: o.ok };
   }
   if (o.k === 'rep') {
     let k = kidById(o.id);

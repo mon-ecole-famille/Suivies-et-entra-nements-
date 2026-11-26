@@ -21,6 +21,10 @@ function modal(html, { onMount } = {}) {
   document.body.appendChild(m); onMount && onMount(m); return m;
 }
 function pinPrompt(title = 'Code parent') {
+  if (!S().pin && St.hasLocalKid()) {
+    modal(`<h3>🔒 Code parent</h3><p>Le code parent n’est pas encore installé sur ce téléphone.</p><p class="muted">Demande à ton parent de t’envoyer le <b>lien famille</b> (depuis son Espace parent), puis ouvre-le.</p><button class="btn wide" data-close>OK</button>`);
+    return Promise.resolve(false);
+  }
   if (!S().pin) return createPin();
   return new Promise((resolve) => {
     const m = modal(`<h3>🔒 ${esc(title)}</h3><input class="pin" type="password" inputmode="numeric" maxlength="6" placeholder="••••" autofocus>
@@ -158,6 +162,14 @@ async function importView(code) {
   try {
     const r = await St.importCode(code);
     history.replaceState(null, '', location.pathname + (r.type === 'setup' ? `#/k/${r.kid.id}` : '#/parent'));
+    if (r.type === 'fam' || r.type === 'dec' || r.type === 'dec-missing') {
+      const target = S().lastKid && St.kidById(S().lastKid) && !St.kidById(S().lastKid).remote ? '#/k/' + S().lastKid + (r.type === 'dec' ? '/rewards' : '') : '#/';
+      history.replaceState(null, '', location.pathname + target);
+      if (r.type === 'fam') toast('Lien famille installé ✅ (code parent + récompenses)', 3500);
+      else if (r.type === 'dec') { toast(r.ok ? `🎉 Récompense validée : ${r.req.name} !` : `Demande refusée : ${r.req.name} (points rendus)`, 4000); if (r.ok) confetti(); }
+      else toast('Code parent et récompenses mis à jour ✅');
+      render(); return;
+    }
     if (r.type === 'setup') { toast(`Bienvenue ${r.kid.name} ! Ton profil est prêt 🎉`, 3500); confetti(); }
     else if (r.type === 'report') toast(`Bilan de ${r.kid.name} mis à jour ✅`, 3500);
     else toast('Ce bilan est plus ancien que les données de cet appareil.');
@@ -340,7 +352,7 @@ function rewards(id) {
     <div class="card center"><div class="big-num">💎 ${St.points(k)}</div><small class="muted">points disponibles (1 XP gagné = 1 point)</small></div>
     ${S().rewards.map((r) => `<div class="reward"><span class="ic">${r.icon}</span><div><b>${esc(r.name)}</b><small>${r.cost} 💎</small></div><button class="btn sm" data-r="${r.id}" ${St.points(k) < r.cost ? 'disabled' : ''}>Demander</button></div>`).join('')}
     ${k.requests.length ? `<h2>Mes demandes</h2>${k.requests.slice(0, 10).map((q) => `<div class="reward ${q.st}"><span class="ic">${q.icon}</span><div><b>${esc(q.name)}</b><small>${frDate(q.d)} · ${q.st === 'attente' ? '⏳ en attente' : q.st === 'ok' ? '✅ validée' : '❌ refusée (points rendus)'}</small></div>${q.st === 'attente' ? `<button class="btn sm ghost" data-v="${q.id}">Parent : valider</button>` : ''}</div>`).join('')}` : ''}</div>`;
-  document.querySelectorAll('[data-r]').forEach((b) => { b.onclick = () => { const r = S().rewards.find((x) => x.id === b.dataset.r); if (St.requestReward(k, r)) { toast('Demande envoyée ! Montre-la à ton parent 🙌'); render(); } }; });
+  document.querySelectorAll('[data-r]').forEach((b) => { b.onclick = async () => { const r = S().rewards.find((x) => x.id === b.dataset.r); if (St.requestReward(k, r)) { render(); const url = await St.reportLink(k); await share('Demande de récompense', `🎁 ${k.name} demande : ${r.icon} ${r.name} (${r.cost} 💎). Ouvre ce lien pour voir mon bilan et valider :`, url); } }; });
   document.querySelectorAll('[data-v]').forEach((b) => { b.onclick = async () => { if (await pinPrompt('Valider la récompense')) { St.settleRequest(k, b.dataset.v, true); confetti(); render(); } }; });
 }
 function badges(id) {
@@ -403,9 +415,15 @@ async function parentHome() {
       <div class="pc-h"><span class="av sm">${k.avatar}</span><div><b>${esc(k.name)}</b><small>${St.LEVELS[k.level].label} · Niv. ${St.levelInfo(k.xp).lvl} ${k.remote ? `· 📡 bilan du ${new Date(k.reportAt || k.updated).toLocaleDateString('fr-FR')}` : ''}</small></div>${pend ? `<span class="pill gem">🎁 ${pend}</span>` : ''}</div>
       <div class="stats4 mini"><div><b>${k.remote ? '—' : fmtMin(d.ms)}</b><small>aujourd’hui</small></div><div><b>${w.min} min</b><small>7 jours</small></div><div><b>${w.n ? pct(w.rate) : '—'}</b><small>réussite</small></div><div><b>🔥 ${St.liveStreak(k)}</b><small>série</small></div></div>
       <p class="insight">${esc(insights(k)[0] || '')}</p></button>`; }).join('')}
-    <div class="card"><h3>📲 Comment ça marche ?</h3><ol class="howto"><li>Chaque enfant reçoit le <b>lien de sa classe</b> (fiche), l’ouvre, écrit son prénom, puis « Ajouter à l’écran d’accueil ».</li><li>Chaque semaine, il t’envoie son <b>bilan</b> (bouton dans son app) : tu l’ouvres, ton tableau de bord se met à jour.</li><li>Si vous partagez une tablette, tout est déjà à jour ici.</li></ol></div>
+    <div class="card"><h3>📨 Liens à envoyer</h3><p class="muted">À envoyer par WhatsApp, même à distance.</p>
+      <button class="btn wide" id="fam">🔐 Lien famille (code parent + récompenses)</button>
+      <p class="muted">À envoyer une fois aux 3 enfants, puis à nouveau si tu changes le code ou les récompenses.</p>
+      <div class="row">${Object.entries(St.LEVELS).map(([key, v]) => `<button class="btn ghost sm" data-start="${key}">Lien ${v.label}</button>`).join('')}</div></div>
+    <div class="card"><h3>📲 Comment ça marche ?</h3><ol class="howto"><li>Chaque enfant reçoit le <b>lien de sa classe</b> (fiche), l’ouvre, écrit son prénom, puis « Ajouter à l’écran d’accueil ».</li><li>Envoie-leur ensuite le <b>lien famille</b> : il installe ton code et tes récompenses sur leur téléphone.</li><li>Chaque semaine, il t’envoie son <b>bilan</b> (bouton dans son app) : tu l’ouvres, ton tableau de bord se met à jour.</li><li>Si vous partagez une tablette, tout est déjà à jour ici.</li></ol></div>
     <div class="row"><button class="btn ghost" onclick="location.hash='#/parent/settings'">⚙️ Réglages & récompenses</button><button class="btn ghost" id="add">➕ Ajouter un enfant</button></div></div>`;
   document.getElementById('add').onclick = () => kidEditor();
+  document.getElementById('fam').onclick = async () => share('Lien famille Mon École', '🔐 Ouvre ce lien sur ton téléphone, après avoir créé ton profil dans Mon École :', await St.familyLink());
+  document.querySelectorAll('[data-start]').forEach((b) => { b.onclick = () => share('Mon École', '🎓 Ton appli de révisions : ouvre ce lien, écris ton prénom, puis ajoute-la à ton écran d’accueil.', location.origin + location.pathname + '#/start/' + b.dataset.start); });
 }
 async function parentKid(id) {
   if (!(await parentGate())) return;
@@ -416,7 +434,7 @@ async function parentKid(id) {
       ${k.remote ? `<p class="muted">📡 Données issues du dernier bilan reçu (${new Date(k.reportAt || k.updated).toLocaleString('fr-FR')}).</p>` : ''}</div>
     <div class="card insights"><h3>🧭 Analyse & conseils</h3>${insights(k).map((t) => `<p>${esc(t)}</p>`).join('')}</div>
     ${progressBlocks(k, false)}
-    ${pend.length ? `<div class="card"><h3>🎁 Demandes en attente</h3>${pend.map((q) => `<div class="reward"><span class="ic">${q.icon}</span><div><b>${esc(q.name)}</b><small>${q.cost} 💎 · ${frDate(q.d)}</small></div>${k.remote ? '<small>à valider sur son appareil</small>' : `<button class="btn sm" data-ok="${q.id}">✔</button><button class="btn sm ghost" data-no="${q.id}">✕</button>`}</div>`).join('')}</div>` : ''}
+    ${pend.length ? `<div class="card"><h3>🎁 Demandes en attente</h3>${pend.map((q) => `<div class="reward"><span class="ic">${q.icon}</span><div><b>${esc(q.name)}</b><small>${q.cost} 💎 · ${frDate(q.d)}</small></div><button class="btn sm" data-ok="${q.id}">✔</button><button class="btn sm ghost" data-no="${q.id}">✕</button></div>`).join('')}</div>` : ''}
     <div class="card"><h3>🤖 Compétences IA</h3><div class="stats4 mini"><div><b>${k.ia.lessons.length}</b><small>leçons</small></div><div><b>${k.ia.detective}</b><small>erreurs d’IA trouvées</small></div><div><b>${Math.max(0, ...Object.values(k.ia.prompts))}/5</b><small>meilleur prompt</small></div><div><b>${k.ia.charter ? '✅' : '—'}</b><small>charte</small></div></div></div>
     <div class="card"><h3>🕒 Dernières séances</h3>${k.sessions.slice(0, 8).map((s) => `<div class="sess"><span>${frDate(s.d)}</span><span>${s.sub === 'mix' || !s.sub ? (s.mode === 'review' ? '🔁 Révision' : '⚡ Défi') : subOf(k, s.sub).icon + ' ' + esc(subOf(k, s.sub).name)}</span><b>${s.ok}/${s.n}</b><small>${fmtMin(s.ms)}</small></div>`).join('') || '<p class="muted">Aucune séance.</p>'}</div>
     <div class="card"><h3>🏅 Badges (${Object.keys(k.badges).length}/${St.BADGES.length})</h3>${St.BADGES.filter((b) => k.badges[b.id]).map((b) => `<span class="chip">${b.icon} ${esc(b.name)}</span>`).join('') || '<p class="muted">Pas encore de badge.</p>'}</div>
@@ -424,8 +442,13 @@ async function parentKid(id) {
     <div class="row"><button class="btn ghost" id="edit">✏️ Modifier</button>${!k.remote ? `<button class="btn ghost" onclick="location.hash='#/k/${k.id}'">👀 Voir son app</button>` : ''}</div></div>`;
   document.getElementById('setup').onclick = async () => share(`Mon École — ${k.name}`, `${k.avatar} ${k.name}, voici ton application de révisions ! Ouvre ce lien puis ajoute-la à ton écran d’accueil :`, await St.setupLink(k));
   document.getElementById('edit').onclick = () => kidEditor(k);
-  document.querySelectorAll('[data-ok]').forEach((b) => { b.onclick = () => { St.settleRequest(k, b.dataset.ok, true); render(); }; });
-  document.querySelectorAll('[data-no]').forEach((b) => { b.onclick = () => { St.settleRequest(k, b.dataset.no, false); render(); }; });
+  const decide = async (id2, ok) => {
+    if (!k.remote) { St.settleRequest(k, id2, ok); render(); return; }
+    const q = k.requests.find((x) => x.id === id2); const url = await St.decisionLink(k, id2, ok); render();
+    await share('Réponse à ta demande', ok ? `✅ ${k.name}, ta récompense « ${q.name} » est validée ! Ouvre ce lien :` : `${k.name}, ta demande « ${q.name} » est refusée pour cette fois (tes points te sont rendus). Ouvre ce lien :`, url);
+  };
+  document.querySelectorAll('[data-ok]').forEach((b) => { b.onclick = () => decide(b.dataset.ok, true); });
+  document.querySelectorAll('[data-no]').forEach((b) => { b.onclick = () => decide(b.dataset.no, false); });
 }
 function kidEditor(k) {
   const isNew = !k; k = k || { name: '', level: '3e', avatar: '🦊', goalMin: 20 };
@@ -450,7 +473,7 @@ async function parentSettings() {
     <div class="card"><h3>🎁 Récompenses</h3><p class="muted">1 bonne réponse ≈ 10 à 20 points. Une séance ≈ 100 à 200 points.</p>
       <div id="rw">${S().rewards.map((r, i) => `<div class="rw-edit"><input value="${esc(r.icon)}" data-f="icon" data-i="${i}" class="emo"><input value="${esc(r.name)}" data-f="name" data-i="${i}"><input type="number" value="${r.cost}" data-f="cost" data-i="${i}" class="num"><button class="icon" data-del="${i}">🗑️</button></div>`).join('')}</div>
       <div class="row"><button class="btn ghost" id="rw-add">➕ Ajouter</button><button class="btn" id="rw-save">Enregistrer</button></div>
-      <p class="muted">Après modification, renvoie le lien d’installation aux enfants pour mettre à jour leurs récompenses (leur progression est conservée).</p></div>
+      <p class="muted">Après modification, renvoie le <b>lien famille</b> aux enfants (Espace parent) pour mettre à jour leurs récompenses.</p></div>
     <div class="card"><h3>🔒 Code parent</h3><input id="newpin" type="password" inputmode="numeric" maxlength="6" placeholder="Nouveau code"><button class="btn" id="pin-save">Changer le code</button></div>
     <div class="card"><h3>💾 Sauvegarde</h3><p class="muted">Les données sont stockées sur cet appareil. Fais une sauvegarde de temps en temps.</p>
       <div class="row"><button class="btn ghost" id="exp">⬇️ Exporter</button><label class="btn ghost">⬆️ Importer<input type="file" id="imp" accept=".json" hidden></label></div></div>
