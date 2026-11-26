@@ -162,3 +162,7 @@ summary { cursor: pointer; font-weight: 700; }
 /* Ambiance par niveau */
 .lvl-ce2 { --pri: #ff7a59; --pri2: #ffb400; }
 .lvl-1st2s { --pri: #d9468f; --pri2: #8a6bff; }
+
+.avs { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+.avb { font-size: 1.6rem; background: var(--bg); border: 2px solid transparent; border-radius: 12px; padding: 4px 0; cursor: pointer; }
+.avb.on { border-color: var(--pri); background: var(--card); }

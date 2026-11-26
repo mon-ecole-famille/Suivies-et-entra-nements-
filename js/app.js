@@ -21,12 +21,23 @@ function modal(html, { onMount } = {}) {
   document.body.appendChild(m); onMount && onMount(m); return m;
 }
 function pinPrompt(title = 'Code parent') {
+  if (!S().pin) return createPin();
   return new Promise((resolve) => {
     const m = modal(`<h3>🔒 ${esc(title)}</h3><input class="pin" type="password" inputmode="numeric" maxlength="6" placeholder="••••" autofocus>
       <div class="row"><button class="btn ghost" data-close>Annuler</button><button class="btn" data-ok>Valider</button></div>`);
     const inp = m.querySelector('input'); setTimeout(() => inp.focus(), 50);
     const ok = () => { const good = St.checkPin(inp.value); if (good) { m.remove(); resolve(true); } else { inp.value = ''; inp.classList.add('shake'); setTimeout(() => inp.classList.remove('shake'), 400); } };
     m.querySelector('[data-ok]').onclick = ok; inp.onkeydown = (e) => { if (e.key === 'Enter') ok(); };
+    m.addEventListener('click', (e) => { if (e.target.closest('[data-close]') || e.target === m) resolve(false); });
+  });
+}
+function createPin() {
+  return new Promise((resolve) => {
+    const m = modal(`<h3>🔒 Créer le code parent</h3><p class="muted">Aucun code sur cet appareil. Le parent choisit un code (4 à 6 chiffres) : il protège l’espace parent et la validation des récompenses.</p>
+      <input class="pin" type="password" inputmode="numeric" maxlength="6" placeholder="••••">
+      <div class="row"><button class="btn ghost" data-close>Annuler</button><button class="btn" data-ok>Créer</button></div>`);
+    const inp = m.querySelector('input'); setTimeout(() => inp.focus(), 50);
+    m.querySelector('[data-ok]').onclick = () => { if (!/^\d{4,6}$/.test(inp.value)) return toast('4 à 6 chiffres'); S().pin = St.hashPin(inp.value); St.save(); m.remove(); toast('Code parent créé ✅'); resolve(true); };
     m.addEventListener('click', (e) => { if (e.target.closest('[data-close]') || e.target === m) resolve(false); });
   });
 }
@@ -61,6 +72,7 @@ function ring(val, max, label) {
 const routes = [
   [/^#?\/?$/, home],
   [/^#\/setup$/, setup],
+  [/^#\/start\/(ce2|3e|1st2s)$/, startKid],
   [/^#\/import\/(.+)$/, importView],
   [/^#\/k\/(\w+)$/, kidHome],
   [/^#\/k\/(\w+)\/quiz\/([\w-]+)\/?([\w-]*)$/, quiz],
@@ -92,6 +104,7 @@ function needKid(id) { const k = St.kidById(id); if (!k) { go('#/'); return null
 function home() {
   if (!S().kids.length) return welcome();
   const kids = S().kids.filter((k) => !k.remote);
+  if (!kids.length) { go('#/parent'); return; }
   $app.innerHTML = `<div class="page center">
     <div class="hero"><div class="logo">🎓</div><h1>Mon École</h1><p>Qui s’entraîne aujourd’hui ?</p></div>
     <div class="kids">${kids.map((k) => `<button class="kid-card" onclick="location.hash='#/k/${k.id}'"><span class="av">${k.avatar}</span><b>${esc(k.name)}</b><small>${St.LEVELS[k.level].label} · 🔥 ${St.liveStreak(k)}</small></button>`).join('')}</div>
@@ -102,8 +115,8 @@ function home() {
 function welcome() {
   $app.innerHTML = `<div class="page center">
     <div class="hero"><div class="logo big">🎓</div><h1>Mon École</h1><p>Entraînement, progrès et compétences IA<br>pour toute la famille.</p></div>
-    <div class="card"><h3>👨 Je suis le parent</h3><p>Je crée les profils, le code parent et les récompenses.</p><button class="btn wide" onclick="location.hash='#/setup'">Configurer la famille</button></div>
-    <div class="card"><h3>🧒 Je suis un enfant</h3><p>Ouvre simplement le <b>lien d’installation</b> que ton parent t’a envoyé : ton profil se créera tout seul.</p></div>
+    <div class="card"><h3>👨 Je suis le parent</h3><p>Je suis les progrès de mes enfants grâce aux bilans qu’ils m’envoient.</p><button class="btn wide" onclick="location.hash='#/parent'">Espace parent</button><button class="link" onclick="location.hash='#/setup'">Tablette partagée : créer les profils sur cet appareil</button></div>
+    <div class="card"><h3>🧒 Je suis un enfant</h3><p>Choisis ta classe :</p><div class="row">${Object.entries(St.LEVELS).map(([k, v]) => `<button class="btn ghost" onclick="location.hash='#/start/${k}'">${v.label}</button>`).join('')}</div></div>
   </div>`;
 }
 function setup() {
@@ -123,6 +136,22 @@ function setup() {
     for (let i = 0; i < 3; i++) { const n = document.getElementById('n' + i).value.trim(); if (n) S().kids.push(St.newKid(n, document.getElementById('l' + i).value, document.getElementById('av' + i).value)); }
     if (!S().kids.length) return toast('Ajoute au moins un enfant');
     St.save(); parentUnlocked = true; toast('Famille configurée 🎉'); go('#/parent');
+  };
+}
+function startKid(level) {
+  const lv = St.LEVELS[level];
+  const existing = S().kids.find((k) => !k.remote && k.level === level);
+  if (existing) { go('#/k/' + existing.id); return; }
+  document.body.className = 'lvl-' + level;
+  let av = St.AVATARS[Math.floor(Math.random() * St.AVATARS.length)];
+  $app.innerHTML = `<div class="page center"><div class="hero"><div class="logo big" id="avp">${av}</div><h1>Bienvenue !</h1><p>Ton espace <b>${lv.long}</b></p></div>
+    <div class="card"><label>Ton prénom<input id="nm" autocomplete="given-name" placeholder="Prénom"></label>
+    <label>Choisis ton avatar</label><div class="avs">${St.AVATARS.map((a) => `<button class="avb ${a === av ? 'on' : ''}" data-a="${a}">${a}</button>`).join('')}</div></div>
+    <button class="btn wide" id="go">C’est parti 🚀</button></div>`;
+  document.querySelectorAll('.avb').forEach((b) => { b.onclick = () => { av = b.dataset.a; document.querySelectorAll('.avb').forEach((x) => x.classList.toggle('on', x === b)); document.getElementById('avp').textContent = av; }; });
+  document.getElementById('go').onclick = () => {
+    const n = document.getElementById('nm').value.trim(); if (!n) return toast('Écris ton prénom 🙂');
+    const k = St.newKid(n, level, av); S().kids.push(k); S().lastKid = k.id; St.save(); confetti(); toast(`Bienvenue ${n} ! 🎉`); go('#/k/' + k.id);
   };
 }
 async function importView(code) {
@@ -347,7 +376,6 @@ function progressBlocks(k, kidView) {
 // ======================= Espace parent =======================
 async function parentGate() {
   if (parentUnlocked) return true;
-  if (!S().pin) return true;
   const ok = await pinPrompt('Espace parent'); if (ok) parentUnlocked = true; else go('#/');
   return ok;
 }
@@ -370,11 +398,12 @@ async function parentHome() {
   if (!(await parentGate())) return;
   const kids = S().kids;
   $app.innerHTML = `${header('👨‍👩‍👧‍👦 Espace parent', '#/')}<div class="page">
+    ${!kids.length ? '<div class="card center"><div class="logo">📭</div><h3>En attente des bilans</h3><p class="muted">Dès qu’un enfant t’envoie son bilan (bouton « Envoyer mon bilan » dans son app), ouvre le lien reçu : son suivi apparaîtra ici.</p></div>' : ''}
     ${kids.map((k) => { const w = St.rangeStats(k, 7); const d = k.days[St.today()] || { ms: 0 }; const pend = k.requests.filter((r) => r.st === 'attente').length; return `<button class="pcard" onclick="location.hash='#/parent/k/${k.id}'">
       <div class="pc-h"><span class="av sm">${k.avatar}</span><div><b>${esc(k.name)}</b><small>${St.LEVELS[k.level].label} · Niv. ${St.levelInfo(k.xp).lvl} ${k.remote ? `· 📡 bilan du ${new Date(k.reportAt || k.updated).toLocaleDateString('fr-FR')}` : ''}</small></div>${pend ? `<span class="pill gem">🎁 ${pend}</span>` : ''}</div>
       <div class="stats4 mini"><div><b>${k.remote ? '—' : fmtMin(d.ms)}</b><small>aujourd’hui</small></div><div><b>${w.min} min</b><small>7 jours</small></div><div><b>${w.n ? pct(w.rate) : '—'}</b><small>réussite</small></div><div><b>🔥 ${St.liveStreak(k)}</b><small>série</small></div></div>
       <p class="insight">${esc(insights(k)[0] || '')}</p></button>`; }).join('')}
-    <div class="card"><h3>📲 Comment ça marche ?</h3><ol class="howto"><li>Pour chaque enfant : <b>Détail → Lien d’installation</b>, envoyé par WhatsApp/SMS sur son téléphone.</li><li>Il ouvre le lien, puis « Ajouter à l’écran d’accueil ».</li><li>Chaque semaine, il t’envoie son <b>bilan</b> (bouton dans son app) : tu l’ouvres, ton tableau de bord se met à jour.</li><li>Si vous partagez une tablette, tout est déjà à jour ici.</li></ol></div>
+    <div class="card"><h3>📲 Comment ça marche ?</h3><ol class="howto"><li>Chaque enfant reçoit le <b>lien de sa classe</b> (fiche), l’ouvre, écrit son prénom, puis « Ajouter à l’écran d’accueil ».</li><li>Chaque semaine, il t’envoie son <b>bilan</b> (bouton dans son app) : tu l’ouvres, ton tableau de bord se met à jour.</li><li>Si vous partagez une tablette, tout est déjà à jour ici.</li></ol></div>
     <div class="row"><button class="btn ghost" onclick="location.hash='#/parent/settings'">⚙️ Réglages & récompenses</button><button class="btn ghost" id="add">➕ Ajouter un enfant</button></div></div>`;
   document.getElementById('add').onclick = () => kidEditor();
 }
