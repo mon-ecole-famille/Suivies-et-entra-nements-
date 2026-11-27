@@ -4,7 +4,7 @@ const VERSION = '__VERSION__';
 const CACHE = 'mon-ecole-' + VERSION;
 const ASSETS = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
-  'js/app.js', 'js/store.js', 'js/generators.js', 'js/prompt-lab.js',
+  'js/app.js', 'js/store.js', 'js/generators.js', 'js/prompt-lab.js', 'js/sync.js',
   'js/data/ce2.js', 'js/data/3e.js', 'js/data/1st2s.js', 'js/data/ia.js',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',
 ];

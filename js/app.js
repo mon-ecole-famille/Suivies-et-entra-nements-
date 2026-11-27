@@ -1,6 +1,7 @@
 import * as St from './store.js';
 import { LESSONS, DETECTIVE, PROMPT_CHALLENGES, PROMPT_BOX, CHARTER, TIER_BY_LEVEL } from './data/ia.js';
 import { evaluatePrompt } from './prompt-lab.js';
+import * as Sync from './sync.js';
 
 const $app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -415,6 +416,7 @@ async function parentHome() {
       <div class="pc-h"><span class="av sm">${k.avatar}</span><div><b>${esc(k.name)}</b><small>${St.LEVELS[k.level].label} · Niv. ${St.levelInfo(k.xp).lvl} ${k.remote ? `· 📡 bilan du ${new Date(k.reportAt || k.updated).toLocaleDateString('fr-FR')}` : ''}</small></div>${pend ? `<span class="pill gem">🎁 ${pend}</span>` : ''}</div>
       <div class="stats4 mini"><div><b>${k.remote ? '—' : fmtMin(d.ms)}</b><small>aujourd’hui</small></div><div><b>${w.min} min</b><small>7 jours</small></div><div><b>${w.n ? pct(w.rate) : '—'}</b><small>réussite</small></div><div><b>🔥 ${St.liveStreak(k)}</b><small>série</small></div></div>
       <p class="insight">${esc(insights(k)[0] || '')}</p></button>`; }).join('')}
+    ${Sync.enabled() ? `<div class="card"><h3>☁️ Synchro automatique active</h3><p class="muted">Les progrès des enfants arrivent ici tout seuls dès qu’ils ont du réseau${Sync.lastSync() ? ` (dernière synchro : ${new Date(Sync.lastSync()).toLocaleString('fr-FR')})` : ''}. Plus besoin des bilans par WhatsApp.</p></div>` : ''}
     <div class="card"><h3>📨 Liens à envoyer</h3><p class="muted">À envoyer par WhatsApp, même à distance.</p>
       <button class="btn wide" id="fam">🔐 Lien famille (code parent + récompenses)</button>
       <p class="muted">À envoyer une fois aux 3 enfants, puis à nouveau si tu changes le code ou les récompenses.</p>
@@ -444,6 +446,7 @@ async function parentKid(id) {
   document.getElementById('edit').onclick = () => kidEditor(k);
   const decide = async (id2, ok) => {
     if (!k.remote) { St.settleRequest(k, id2, ok); render(); return; }
+    if (Sync.enabled()) { Sync.queueDecision(k, id2, ok); toast(ok ? '✅ Validé : ' + k.name + ' le verra dans son appli' : 'Refusé : ses points lui sont rendus'); render(); return; }
     const q = k.requests.find((x) => x.id === id2); const url = await St.decisionLink(k, id2, ok); render();
     await share('Réponse à ta demande', ok ? `✅ ${k.name}, ta récompense « ${q.name} » est validée ! Ouvre ce lien :` : `${k.name}, ta demande « ${q.name} » est refusée pour cette fois (tes points te sont rendus). Ouvre ce lien :`, url);
   };
@@ -475,11 +478,20 @@ async function parentSettings() {
       <div class="row"><button class="btn ghost" id="rw-add">➕ Ajouter</button><button class="btn" id="rw-save">Enregistrer</button></div>
       <p class="muted">Après modification, renvoie le <b>lien famille</b> aux enfants (Espace parent) pour mettre à jour leurs récompenses.</p></div>
     <div class="card"><h3>🔒 Code parent</h3><input id="newpin" type="password" inputmode="numeric" maxlength="6" placeholder="Nouveau code"><button class="btn" id="pin-save">Changer le code</button></div>
+    <div class="card"><h3>☁️ Synchronisation</h3>${Sync.enabled()
+      ? `<p class="muted">Active sur cet appareil (${Sync.role() === 'parent' ? 'parent' : 'enfant'}). Dernière synchro : ${Sync.lastSync() ? new Date(Sync.lastSync()).toLocaleString('fr-FR') : 'pas encore'}.${Sync.lastError() ? ' ⚠️ ' + esc(Sync.lastError()) : ''}</p>
+        <div class="row"><button class="btn" id="sy-now">🔄 Synchroniser</button><button class="btn ghost danger" id="sy-off">Désactiver ici</button></div>`
+      : `<p class="muted">Les progrès des enfants remontent tout seuls sur ton téléphone, même quand tu es loin. L’app continue de marcher sans réseau.</p>
+        <button class="btn wide" id="sy-on">Activer la synchro</button>
+        <p class="muted">Ensuite, renvoie le <b>lien famille</b> à chaque enfant : leur appli se synchronisera aussi.</p>`}</div>
     <div class="card"><h3>💾 Sauvegarde</h3><p class="muted">Les données sont stockées sur cet appareil. Fais une sauvegarde de temps en temps.</p>
       <div class="row"><button class="btn ghost" id="exp">⬇️ Exporter</button><label class="btn ghost">⬆️ Importer<input type="file" id="imp" accept=".json" hidden></label></div></div>
     <div class="card"><h3>ℹ️ Version</h3><p class="muted">L’application se met à jour automatiquement à chaque ouverture quand une nouvelle version est publiée. Version : <span id="ver"></span></p>
       <button class="btn ghost danger" id="reset">Tout réinitialiser sur cet appareil</button></div></div>`;
   document.getElementById('ver').textContent = window.APP_VERSION || '';
+  const syOn = document.getElementById('sy-on'); if (syOn) syOn.onclick = async () => { syOn.disabled = true; try { await Sync.enableAsParent(); toast('☁️ Synchro activée. Renvoie le lien famille aux enfants.', 4000); } catch (e) { toast('Impossible pour l’instant : ' + (e.message || e), 4000); } render(); };
+  const syNow = document.getElementById('sy-now'); if (syNow) syNow.onclick = async () => { syNow.disabled = true; await Sync.syncNow(); toast(Sync.lastError() ? 'Synchro en échec, réessaie avec du réseau' : 'Synchro faite ✅'); render(); };
+  const syOff = document.getElementById('sy-off'); if (syOff) syOff.onclick = () => { if (confirm('Désactiver la synchro sur cet appareil ? Les données restent sur le téléphone.')) { Sync.disable(); render(); } };
   const collect = () => { document.querySelectorAll('#rw [data-f]').forEach((inp) => { const r = S().rewards[+inp.dataset.i]; r[inp.dataset.f] = inp.dataset.f === 'cost' ? Math.max(1, +inp.value || 1) : inp.value; }); };
   document.getElementById('rw-add').onclick = () => { collect(); S().rewards.push({ id: 'r' + Date.now().toString(36), name: 'Nouvelle récompense', icon: '🎁', cost: 300 }); St.save(); render(); };
   document.getElementById('rw-save').onclick = () => { collect(); St.save(); toast('Récompenses enregistrées ✅'); };
@@ -491,6 +503,7 @@ async function parentSettings() {
 }
 
 // ======================= Démarrage =======================
+Sync.init(() => { if (!location.hash.includes('/quiz/') && !document.querySelector('.modal')) render(); });
 if (!location.hash && S().lastKid && St.kidById(S().lastKid) && !St.kidById(S().lastKid).remote) location.hash = '#/k/' + S().lastKid;
 render();
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {

@@ -32,7 +32,10 @@ function load() {
   try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && s.v) return s; } catch (e) { /* ignore */ }
   return blank();
 }
-export function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { console.warn(e); } }
+// Crochets posés par sync.js (synchro Supabase facultative)
+const hooks = { onSave: null, linkExtra: () => null, onInvite: null };
+export function setSyncHooks(h) { Object.assign(hooks, h); }
+export function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { console.warn(e); } if (hooks.onSave) hooks.onSave(); }
 export function resetAll() { S = blank(); save(); }
 export function replaceState(obj) { S = obj; save(); }
 
@@ -279,12 +282,13 @@ export function requestReward(kid, rw) {
   if (points(kid) < rw.cost) return false;
   kid.spent += rw.cost;
   kid.requests.unshift({ id: uid(), rid: rw.id, name: rw.name, icon: rw.icon, cost: rw.cost, d: today(), st: 'attente' });
-  save(); return true;
+  kid.updated = Date.now(); save(); return true;
 }
 export function settleRequest(kid, reqId, accept) {
   const r = kid.requests.find((x) => x.id === reqId); if (!r || r.st !== 'attente') return;
   r.st = accept ? 'ok' : 'refus';
   if (!accept) kid.spent -= r.cost;
+  if (!kid.remote) kid.updated = Date.now();
   save();
 }
 
@@ -310,18 +314,22 @@ function b64(u8) { let s = ''; u8.forEach((b) => { s += String.fromCharCode(b); 
 function unb64(s) { s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; const bin = atob(s); return Uint8Array.from(bin, (c) => c.charCodeAt(0)); }
 const base = () => location.origin + location.pathname;
 
-export async function reportLink(kid) {
+export function snapshot(kid) {
   const days = {}; for (let i = 0; i < 60; i++) { const d = addDays(today(), -i); if (kid.days[d]) { const x = kid.days[d]; days[d] = { n: x.n, ok: x.ok, ms: x.ms, xp: x.xp, goalDone: !!x.goalDone }; } }
   const snap = { k: 'rep', id: kid.id, name: kid.name, level: kid.level, avatar: kid.avatar, goalMin: kid.goalMin, xp: kid.xp, spent: kid.spent, streak: liveStreak(kid), best: kid.best, lastDay: kid.lastDay, days, stats: kid.stats, badges: kid.badges, sessions: kid.sessions.slice(0, 25), requests: kid.requests.slice(0, 10), ia: kid.ia, updated: kid.updated, at: Date.now() };
+  return snap;
+}
+export async function reportLink(kid) {
+  const snap = snapshot(kid);
   kid.lastReport = today(); save();
   return base() + '#/import/' + await pack(snap);
 }
 export async function setupLink(kid) {
-  const obj = { k: 'setup', kid: { id: kid.id, name: kid.name, level: kid.level, avatar: kid.avatar, goalMin: kid.goalMin }, rewards: S.rewards, pin: S.pin };
+  const obj = { k: 'setup', kid: { id: kid.id, name: kid.name, level: kid.level, avatar: kid.avatar, goalMin: kid.goalMin }, rewards: S.rewards, pin: S.pin, sync: hooks.linkExtra() };
   return base() + '#/import/' + await pack(obj);
 }
 // Lien famille : installe le code parent et les récompenses sur le téléphone d'un enfant (à distance)
-export async function familyLink() { return base() + '#/import/' + await pack({ k: 'fam', rewards: S.rewards, pin: S.pin }); }
+export async function familyLink() { return base() + '#/import/' + await pack({ k: 'fam', rewards: S.rewards, pin: S.pin, sync: hooks.linkExtra() }); }
 // Décision du parent sur une demande de récompense, envoyée à distance
 export async function decisionLink(kid, reqId, accept) {
   const r = kid.requests.find((x) => x.id === reqId); if (r) { r.st = accept ? 'ok' : 'refus'; save(); }
@@ -330,6 +338,10 @@ export async function decisionLink(kid, reqId, accept) {
 export const hasLocalKid = () => S.kids.some((k) => !k.remote);
 export async function importCode(code) {
   const o = await unpack(code);
+  if (o.sync && hooks.onInvite) hooks.onInvite(o.sync);
+  return applyObj(o);
+}
+export function applyObj(o) {
   if (o.k === 'setup') {
     let k = kidById(o.kid.id);
     if (!k) { k = newKid(o.kid.name, o.kid.level, o.kid.avatar, o.kid.id); S.kids.push(k); }
